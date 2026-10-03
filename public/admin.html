@@ -1,46 +1,68 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wealthspring Admin</title>
-<script src="https://cdn.tailwindcss.com"></script></head>
-<body class="bg-slate-900 text-white p-3">
-<div id="login" class="max-w-sm mx-auto mt-20 bg-white text-black p-6 rounded-xl">
-<h1 class="text-2xl font-bold text-center">Admin Login</h1>
-<input id="pass" type="password" placeholder="Enter ADMIN_PASS" class="w-full border p-3 rounded mt-4">
-<button onclick="login()" class="w-full bg-green-600 text-white p-3 rounded mt-3 font-bold">Login</button>
-<p id="err" class="text-red-600 text-sm mt-2"></p>
-</div>
-<div id="panel" class="hidden max-w-5xl mx-auto">
-<h1 class="text-2xl font-bold">Wealthspring Admin - Deposits $0 → Approved</h1>
-<div id="users" class="bg-white text-black rounded p-4 mt-6">Loading users...</div>
-</div>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white p-4">
+<h1 class="text-2xl font-bold mb-4">Admin - Deposits</h1>
+<div id="status" class="mb-4 text-yellow-400">Loading...</div>
+<div id="list" class="space-y-3"></div>
+
 <script>
-const API='https://wealthspring-backend.onrender.com';
-async function login(){
- let password=document.getElementById('pass').value;
- let r=await fetch(API+'/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
- let d=await r.json();
- if(d.error){document.getElementById('err').innerText=d.error;return;}
- localStorage.setItem('ap',password);
- show();
+const API = "https://wealthspring-backend.onrender.com";
+
+async function load() {
+  document.getElementById('status').textContent = "Loading deposits...";
+  try {
+    const res = await fetch(`${API}/api/admin/deposits`);
+    const data = await res.json();
+    if (!data.deposits || data.deposits.length === 0) {
+      document.getElementById('status').textContent = "No deposits yet";
+      document.getElementById('list').innerHTML = "<p class='text-gray-400'>Waiting for deposits...</p>";
+      return;
+    }
+    document.getElementById('status').textContent = `${data.deposits.length} deposits`;
+    document.getElementById('list').innerHTML = data.deposits.map(d => `
+      <div class="bg-gray-800 p-4 rounded-lg border ${d.status==='approved'?'border-green-500':'border-yellow-600'}">
+        <div class="flex justify-between items-start">
+          <div>
+            <p class="font-bold">$${d.amount} - ${d.email}</p>
+            <p class="text-sm text-gray-400 break-all">TX: ${d.txHash}</p>
+            <p class="text-xs text-gray-500">${new Date(d.createdAt).toLocaleString()}</p>
+            <span class="text-xs px-2 py-1 rounded ${d.status==='approved'?'bg-green-600':'bg-yellow-600'}">${d.status}</span>
+          </div>
+          ${d.status==='pending' ? `<button onclick="approve('${d.id}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold">Approve</button>` : `<span class="text-green-400">✓ Done</span>`}
+        </div>
+      </div>
+    `).join('');
+  } catch(e){
+    document.getElementById('status').textContent = "Error: " + e.message;
+  }
 }
-async function show(){
- document.getElementById('login').classList.add('hidden');
- document.getElementById('panel').classList.remove('hidden');
- let r=await fetch(API+'/api/admin/users');
- let users=await r.json();
- document.getElementById('users').innerHTML=users.map(u=>`
-  <div class="border-b py-3">
-   <b>${u.email}</b> - Balance: $${u.balance||0}<br>
-   ${u.deposits?.map(dep=>`
-    <div class="bg-slate-100 p-2 rounded mt-2 flex justify-between">
-     <span>${dep.amount} USD - ${dep.status} - ID:${dep.id}</span>
-     ${dep.status=='pending'?`<button onclick="approve('${u.email}','${dep.id}')" class="bg-green-600 text-white px-3 py-1 rounded">Approve</button>`:''}
-    </div>`).join('')||'No deposits'}
-  </div>`).join('')||'No users yet';
+
+async function approve(id){
+  if(!confirm("Approve this deposit? User balance will update and user gets email.")) return;
+  try{
+    const res = await fetch(`${API}/api/admin/approve`, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({id})
+    });
+    const data = await res.json();
+    if(data.success){
+      alert("Approved! Balance updated.");
+      load();
+    } else {
+      alert("Failed: " + (data.message||"error"));
+    }
+  }catch(e){ alert(e.message); }
 }
-async function approve(email,depositId){
- await fetch(API+'/api/admin/approve-deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,depositId})});
- show();
-}
-if(localStorage.getItem('ap')){document.getElementById('pass').value=localStorage.getItem('ap');login();}
-</script></body></html>
+
+load();
+setInterval(load, 10000); // auto refresh every 10 sec
+</script>
+</body>
+</html>
