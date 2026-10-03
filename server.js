@@ -1,107 +1,90 @@
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 
 const app = express();
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors());
 app.use(express.json());
 
-// In-memory storage (balance + deposits) - survives until Render restarts
-// For permanent, later we add Mongo, but this works now for email push
-let users = {}; // { "email@gmail.com": { balance: 0 } }
-let deposits = []; // { id, email, amount, txId, status }
+// --- MEMORY STORAGE (No Mongo needed) ---
+let users = [];
+let deposits = [];
 
-let transporter = nodemailer.createTransport({
+// --- EMAIL ---
+const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.GMAIL_USER, // your gmail
-    pass: process.env.GMAIL_PASS // app password, not normal password
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
   }
 });
 
-async function sendEmail(to, subject, html) {
-  try {
-    await transporter.sendMail({
-      from: `"Wealthspring" <${process.env.GMAIL_USER}>`,
-      to,
-      subject,
-      html
-    });
-    console.log('Email sent to', to);
-  } catch(e) { console.log('Email error', e.message); }
+async function sendMail(to, subject, html){
+  try{
+    await transporter.sendMail({ from: process.env.EMAIL_USER, to, subject, html });
+  }catch(e){ console.log("Mail error", e.message); }
 }
 
-// When user clicks "I Have Sent"
-app.post('/api/deposit', async (req, res) => {
-  const { email, amount, txId } = req.body;
-  const id = Date.now().toString();
-  deposits.push({ id, email, amount, txId, status: 'pending', date: new Date().toLocaleString() });
-  if(!users[email]) users[email] = { balance: 0 };
+// --- ROUTES ---
 
-  // PUSH EMAIL TO YOU
-  await sendEmail(
-    process.env.ADMIN_EMAIL || process.env.GMAIL_USER,
-    `NEW DEPOSIT $${amount} from ${email}`,
-    `<h2>New Deposit Request</h2><p><b>User:</b> ${email}</p><p><b>Amount:</b> $${amount}</p><p><b>TX Hash:</b> ${txId}</p><p>Go to /admin to approve.</p>`
-  );
+app.get('/', (req,res)=> res.send('Wealthspring backend live'));
 
-  res.json({ ok: true });
+// Signup
+app.post('/api/signup', async (req,res)=>{
+  const {email, password} = req.body;
+  if(users.find(u=>u.email===email)) return res.json({success:false, message:"Exists"});
+  users.push({email, password, balance:0});
+  res.json({success:true});
 });
 
-// When user requests withdraw
-app.post('/api/withdraw', async (req, res) => {
-  const { email, amount, address } = req.body;
-  await sendEmail(
-    process.env.ADMIN_EMAIL,
-    `WITHDRAW $${amount} from ${email}`,
-    `<p>User ${email} wants to withdraw $${amount} to ${address}</p>`
-  );
-  res.json({ ok: true });
-});
-
-// Support message
-app.post('/api/support', async (req, res) => {
-  const { email, subject, message } = req.body;
-  await sendEmail(
-    process.env.ADMIN_EMAIL,
-    `Support: ${subject} from ${email}`,
-    `<p>From: ${email}</p><p>Subject: ${subject}</p><p>${message}</p>`
-  );
-  res.json({ ok: true });
+// Login
+app.post('/api/login', (req,res)=>{
+  const {email,password} = req.body;
+  const user = users.find(u=>u.email===email && u.password===password);
+  if(!user) return res.json({success:false, message:"Invalid login"});
+  res.json({success:true, email: user.email, balance: user.balance});
 });
 
 // Get balance
-app.get('/api/balance', (req, res) => {
-  const email = req.query.email;
-  res.json({ balance: users[email]?.balance || 0 });
+app.post('/api/balance', (req,res)=>{
+  const {email} = req.body;
+  const user = users.find(u=>u.email===email);
+  res.json({balance: user?user.balance:0});
 });
 
-// Admin - view all deposits
-app.get('/api/admin/deposits', (req, res) => {
-  res.json(deposits);
+// Deposit
+app.post('/api/deposit', async (req,res)=>{
+  const {email, amount, txHash} = req.body;
+  const id = Date.now().toString();
+  const dep = {id, email, amount: Number(amount), txHash, status:'pending', createdAt: new Date()};
+  deposits.push(dep);
+
+  // Email you instantly
+  await sendMail(process.env.EMAIL_USER, `NEW DEPOSIT $${amount} from ${email}`, `<h2>$${amount}</h2><p>Email: ${email}</p><p>TX: ${txHash}</p><p><a href="https://wealthspring-backend.onrender.com/admin.html">Click to Approve</a></p>`);
+
+  res.json({success:true});
 });
 
-// Admin - APPROVE and update balance
-app.post('/api/admin/approve', async (req, res) => {
-  const { id } = req.body;
-  const dep = deposits.find(d => d.id === id);
-  if(!dep) return res.status(404).json({msg:'not found'});
-  if(dep.status === 'approved') return res.json({msg:'already approved'});
+// Admin - get deposits
+app.get('/api/admin/deposits', (req,res)=>{
+  res.json({deposits: deposits.reverse()});
+});
 
+// Admin - approve
+app.post('/api/admin/approve', async (req,res)=>{
+  const {id} = req.body;
+  const dep = deposits.find(d=>d.id===id);
+  if(!dep) return res.json({success:false, message:"Not found"});
   dep.status = 'approved';
-  if(!users[dep.email]) users[dep.email] = { balance: 0 };
-  users[dep.email].balance += Number(dep.amount);
-
-  await sendEmail(
-    dep.email,
-    `Deposit Approved $${dep.amount}`,
-    `<h3>Your deposit of $${dep.amount} is now approved!</h3><p>New balance: $${users[dep.email].balance}</p><p>TX: ${dep.txId}</p>`
-  );
-
-  res.json({ ok: true, balance: users[dep.email].balance });
+  const user = users.find(u=>u.email===dep.email);
+  if(user) user.balance += Number(dep.amount);
+  
+  await sendMail(dep.email, "Deposit Approved", `<h2>Your $${dep.amount} deposit was approved!</h2><p>Balance updated.</p>`);
+  
+  res.json({success:true});
 });
-
-app.get('/', (req,res)=> res.send('Wealthspring backend running - no Mongo'));
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, ()=> console.log('Running on', PORT));
+app.listen(PORT, ()=> console.log("Running on", PORT));
