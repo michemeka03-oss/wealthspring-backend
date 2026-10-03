@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wealthspring Admin</title>
+<script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-slate-900 text-white p-3">
+<div id="login" class="max-w-sm mx-auto mt-20 bg-white text-black p-6 rounded-xl">
+<h1 class="text-2xl font-bold text-center">Admin Login</h1>
+<input id="pass" type="password" placeholder="Enter ADMIN_PASS" class="w-full border p-3 rounded mt-4">
+<button onclick="login()" class="w-full bg-green-600 text-white p-3 rounded mt-3 font-bold">Login</button>
+<p id="err" class="text-red-600 text-sm mt-2"></p>
+</div>
+<div id="panel" class="hidden max-w-5xl mx-auto">
+<h1 class="text-2xl font-bold">Wealthspring Admin - Deposits $0 → Approved</h1>
+<div id="users" class="bg-white text-black rounded p-4 mt-6">Loading users...</div>
+</div>
+<script>
+const API='https://wealthspring-backend.onrender.com';
+async function login(){
+ let password=document.getElementById('pass').value;
+ let r=await fetch(API+'/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+ let d=await r.json();
+ if(d.error){document.getElementById('err').innerText=d.error;return;}
+ localStorage.setItem('ap',password);
+ show();
+}
+async function show(){
+ document.getElementById('login').classList.add('hidden');
+ document.getElementById('panel').classList.remove('hidden');
+ let r=await fetch(API+'/api/admin/users');
+ let users=await r.json();
+ document.getElementById('users').innerHTML=users.map(u=>`
+  <div class="border-b py-3">
+   <b>${u.email}</b> - Balance: $${u.balance||0}<br>
+   ${u.deposits?.map(dep=>`
+    <div class="bg-slate-100 p-2 rounded mt-2 flex justify-between">
+     <span>${dep.amount} USD - ${dep.status} - ID:${dep.id}</span>
+     ${dep.status=='pending'?`<button onclick="approve('${u.email}','${dep.id}')" class="bg-green-600 text-white px-3 py-1 rounded">Approve</button>`:''}
+    </div>`).join('')||'No deposits'}
+  </div>`).join('')||'No users yet';
+}
+async function approve(email,depositId){
+ await fetch(API+'/api/admin/approve-deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,depositId})});
+ show();
+}
+if(localStorage.getItem('ap')){document.getElementById('pass').value=localStorage.getItem('ap');login();}
+</script></body></html>
