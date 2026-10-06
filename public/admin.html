@@ -1,68 +1,44 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wealthspring Admin</title>
-<script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-900 text-white p-4">
-<h1 class="text-2xl font-bold mb-4">Admin - Deposits</h1>
-<div id="status" class="mb-4 text-yellow-400">Loading...</div>
-<div id="list" class="space-y-3"></div>
-
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — Wealthspring</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-[#070A14] text-white p-6 font-sans">
+<h1 class="text-[28px] font-extrabold">Admin Panel</h1>
+<div class="mt-4 flex gap-2">
+<button onclick="tab('dep')" id="b-dep" class="px-4 py-2 bg-white text-black rounded-full font-bold">Deposits</button>
+<button onclick="tab('wd')" id="b-wd" class="px-4 py-2 bg-white/10 rounded-full">Withdrawals</button>
+<button onclick="tab('sup')" id="b-sup" class="px-4 py-2 bg-white/10 rounded-full">Support</button>
+<button onclick="tab('bal')" id="b-bal" class="px-4 py-2 bg-white/10 rounded-full">Balances</button>
+</div>
+<div id="tab-dep" class="mt-6"><div id="depList" class="space-y-2"></div></div>
+<div id="tab-wd" class="mt-6 hidden"><div id="wdList" class="space-y-2"></div></div>
+<div id="tab-sup" class="mt-6 hidden"><div id="supList" class="space-y-2"></div></div>
+<div id="tab-bal" class="mt-6 hidden"><div id="balList" class="space-y-2"></div></div>
 <script>
-const API = "https://wealthspring-backend.onrender.com";
-
-async function load() {
-  document.getElementById('status').textContent = "Loading deposits...";
-  try {
-    const res = await fetch(`${API}/api/admin/deposits`);
-    const data = await res.json();
-    if (!data.deposits || data.deposits.length === 0) {
-      document.getElementById('status').textContent = "No deposits yet";
-      document.getElementById('list').innerHTML = "<p class='text-gray-400'>Waiting for deposits...</p>";
-      return;
-    }
-    document.getElementById('status').textContent = `${data.deposits.length} deposits`;
-    document.getElementById('list').innerHTML = data.deposits.map(d => `
-      <div class="bg-gray-800 p-4 rounded-lg border ${d.status==='approved'?'border-green-500':'border-yellow-600'}">
-        <div class="flex justify-between items-start">
-          <div>
-            <p class="font-bold">$${d.amount} - ${d.email}</p>
-            <p class="text-sm text-gray-400 break-all">TX: ${d.txHash}</p>
-            <p class="text-xs text-gray-500">${new Date(d.createdAt).toLocaleString()}</p>
-            <span class="text-xs px-2 py-1 rounded ${d.status==='approved'?'bg-green-600':'bg-yellow-600'}">${d.status}</span>
-          </div>
-          ${d.status==='pending' ? `<button onclick="approve('${d.id}')" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold">Approve</button>` : `<span class="text-green-400">✓ Done</span>`}
-        </div>
-      </div>
-    `).join('');
-  } catch(e){
-    document.getElementById('status').textContent = "Error: " + e.message;
-  }
+const API='https://wealthspring-backend.onrender.com';
+function tab(id){
+ document.querySelectorAll('[id^="tab-"]').forEach(e=>e.classList.add('hidden'));
+ document.getElementById('tab-'+id).classList.remove('hidden');
+ document.querySelectorAll('[id^="b-"]').forEach(e=>e.className='px-4 py-2 bg-white/10 rounded-full');
+ document.getElementById('b-'+id).className='px-4 py-2 bg-white text-black rounded-full font-bold';
+ if(id==='dep') loadDep(); if(id==='wd') loadWd(); if(id==='sup') loadSup(); if(id==='bal') loadBal();
 }
-
-async function approve(id){
-  if(!confirm("Approve this deposit? User balance will update and user gets email.")) return;
-  try{
-    const res = await fetch(`${API}/api/admin/approve`, {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({id})
-    });
-    const data = await res.json();
-    if(data.success){
-      alert("Approved! Balance updated.");
-      load();
-    } else {
-      alert("Failed: " + (data.message||"error"));
-    }
-  }catch(e){ alert(e.message); }
+async function loadDep(){
+ const r=await fetch(API+'/api/admin/deposits'); const {deposits}=await r.json();
+ document.getElementById('depList').innerHTML=deposits.reverse().map(d=>`<div class="bg-white/5 border border-white/10 p-4 rounded-xl flex justify-between"><div><div class="font-bold">${d.email} — $${d.amount}</div><div class="text-[11px] text-white/50">${d.txHash.slice(0,40)}... | ${new Date(d.createdAt).toLocaleString()} | <span class="${d.status==='approved'?'text-green-400':'text-yellow-400'}">${d.status}</span></div></div><div class="flex gap-2"><button onclick="approve(${d.id})" class="px-3 py-1 bg-green-400 text-black rounded-full text-[12px]">Approve</button><button onclick="reject(${d.id})" class="px-3 py-1 bg-white/10 rounded-full text-[12px]">Reject</button></div></div>`).join('')||'No deposits';
 }
-
-load();
-setInterval(load, 10000); // auto refresh every 10 sec
-</script>
-</body>
-</html>
+async function loadWd(){
+ const r=await fetch(API+'/api/admin/withdraws'); const {withdraws}=await r.json();
+ document.getElementById('wdList').innerHTML=withdraws.reverse().map(w=>`<div class="bg-white/5 p-4 rounded-xl flex justify-between"><div><div class="font-bold">${w.email} — $${w.amount} → ${w.address.slice(0,20)}...</div><div class="text-[11px] text-white/50">${new Date(w.date).toLocaleString()} | ${w.status||'pending'}</div></div><button onclick="wdApprove(${w.id})" class="px-3 py-1 bg-white text-black rounded-full text-[12px]">Mark Paid</button></div>`).join('')||'No withdraws';
+}
+async function loadSup(){
+ const r=await fetch(API+'/api/admin/supports'); const {supports}=await r.json();
+ document.getElementById('supList').innerHTML=supports.reverse().map(s=>`<div class="bg-white/5 p-4 rounded-xl"><div class="font-bold text-[13px]">${s.email} — ${s.subject}</div><div class="text-[12px] text-white/60 mt-1">${s.message}</div><div class="text-[10px] text-white/40 mt-2">${new Date(s.date).toLocaleString()}</div></div>`).join('')||'No messages';
+}
+async function loadBal(){
+ const r=await fetch(API+'/api/admin/balances'); const {balances}=await r.json();
+ document.getElementById('balList').innerHTML=Object.entries(balances).map(([e,b])=>`<div class="bg-white/5 p-4 rounded-xl flex justify-between"><span>${e}</span><span class="font-bold">$${b.toFixed(2)}</span></div>`).join('')||'No balances';
+}
+async function approve(id){ await fetch(API+'/api/admin/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadDep(); }
+async function reject(id){ await fetch(API+'/api/admin/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadDep(); }
+async function wdApprove(id){ await fetch(API+'/api/admin/withdraw-approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); loadWd(); }
+loadDep(); setInterval(loadDep,5000);
+</script></body></html>
