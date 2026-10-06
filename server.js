@@ -1,17 +1,64 @@
-const express=require('express');
-const path=require('path');
-const cors=require('cors');
-const app=express();
-app.use(express.static(path.join(__dirname,'public')));
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const app = express();
 app.use(cors());
 app.use(express.json());
-let users=[],deposits=[];
-app.get('/',(req,res)=>res.send('live'));
-app.post('/api/signup',(req,res)=>{const{email,password}=req.body;if(users.find(u=>u.email===email))return res.json({success:false});users.push({email,password,balance:0});res.json({success:true});});
-app.post('/api/login',(req,res)=>{const{email,password}=req.body;let u=users.find(x=>x.email===email&&x.password===password);if(!u){u={email,password,balance:0};users.push(u);}res.json({success:true,email:u.email,balance:u.balance});});
-app.post('/api/balance',(req,res)=>{const u=users.find(x=>x.email===req.body.email);res.json({balance:u?u.balance:0});});
-app.post('/api/my-deposits',(req,res)=>{const list=deposits.filter(d=>d.email===req.body.email).reverse();res.json({deposits:list});});
-app.post('/api/deposit',(req,res)=>{const{email,amount,txHash,hash,txId}=req.body;const finalHash=txHash||hash||txId||'No TX';deposits.push({id:Date.now().toString(),email,amount:Number(amount),txHash:finalHash,status:'pending',createdAt:new Date()});res.json({success:true});});
-app.get('/api/admin/deposits',(req,res)=>res.json({deposits:deposits.slice().reverse()}));
-app.post('/api/admin/approve',(req,res)=>{const dep=deposits.find(d=>d.id===req.body.id);if(!dep)return res.json({success:false});dep.status='approved';let u=users.find(x=>x.email===dep.email);if(!u){u={email:dep.email,password:'x',balance:0};users.push(u);}u.balance+=Number(dep.amount);res.json({success:true});});
-app.listen(process.env.PORT||10000,()=>console.log("Running"));
+app.use(express.static(path.join(__dirname, 'public')));
+
+let balances = {};
+let deposits = [];
+let withdraws = [];
+let supports = [];
+let idCounter = 1;
+
+app.post('/api/balance', (req,res)=>{
+  const email = (req.body.email||'').toLowerCase().trim();
+  res.json({ balance: balances[email] || 0 });
+});
+app.post('/api/my-deposits', (req,res)=>{
+  const email = (req.body.email||'').toLowerCase().trim();
+  res.json({ deposits: deposits.filter(d=>d.email===email).sort((a,b)=>b.createdAt-a.createdAt) });
+});
+app.post('/api/deposit', (req,res)=>{
+  const email=(req.body.email||'').toLowerCase().trim();
+  const amount=parseFloat(req.body.amount)||0;
+  const txHash=req.body.txHash||req.body.hash||req.body.txId||'';
+  deposits.push({ id:idCounter++, email, amount, txHash, status:'pending', createdAt:Date.now() });
+  res.json({ok:true});
+});
+app.post('/api/withdraw', (req,res)=>{
+  const {email,amount,address}=req.body;
+  withdraws.push({id:idCounter++, email, amount, address, date:Date.now(), status:'pending'});
+  res.json({ok:true});
+});
+app.post('/api/support', (req,res)=>{
+  const {email,subject,message}=req.body;
+  supports.push({id:idCounter++, email, subject, message, date:Date.now()});
+  res.json({ok:true});
+});
+
+// ADMIN
+app.get('/api/admin/deposits', (req,res)=> res.json({deposits}));
+app.get('/api/admin/withdraws', (req,res)=> res.json({withdraws}));
+app.get('/api/admin/supports', (req,res)=> res.json({supports}));
+app.get('/api/admin/balances', (req,res)=> res.json({balances}));
+
+app.post('/api/admin/approve', (req,res)=>{
+  const d=deposits.find(x=>x.id==req.body.id);
+  if(d && d.status!=='approved'){ d.status='approved'; balances[d.email]=(balances[d.email]||0)+d.amount; }
+  res.json({ok:true});
+});
+app.post('/api/admin/reject', (req,res)=>{
+  const d=deposits.find(x=>x.id==req.body.id);
+  if(d) d.status='rejected';
+  res.json({ok:true});
+});
+app.post('/api/admin/withdraw-approve', (req,res)=>{
+  const w=withdraws.find(x=>x.id==req.body.id);
+  if(w) w.status='approved';
+  res.json({ok:true});
+});
+
+app.get('*',(req,res)=> res.sendFile(path.join(__dirname,'public/index.html')));
+app.listen(process.env.PORT||10000, ()=> console.log('live'));
