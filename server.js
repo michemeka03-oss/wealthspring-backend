@@ -11,7 +11,25 @@ let balances = {};
 let deposits = [];
 let withdraws = [];
 let supports = [];
+let users = {};
 let idCounter = 1;
+
+// ADDED - these were missing
+app.post('/api/register', (req,res)=>{
+  const email=(req.body.email||'').toLowerCase().trim();
+  const password=req.body.password||'';
+  if(!email||!password) return res.json({ok:false, error:'missing'});
+  if(users[email]) return res.json({ok:false, error:'exists'});
+  users[email]={email,password,createdAt:Date.now()};
+  balances[email]=balances[email]||0;
+  res.json({ok:true, email});
+});
+app.post('/api/login', (req,res)=>{
+  const email=(req.body.email||'').toLowerCase().trim();
+  const password=req.body.password||'';
+  if(users[email] && users[email].password===password) return res.json({ok:true,email});
+  res.json({ok:false, error:'invalid'});
+});
 
 app.post('/api/balance', (req,res)=>{
   const email = (req.body.email||'').toLowerCase().trim();
@@ -42,7 +60,8 @@ app.post('/api/support', (req,res)=>{
 app.get('/api/admin/deposits', (req,res)=> res.json({deposits}));
 app.get('/api/admin/withdraws', (req,res)=> res.json({withdraws}));
 app.get('/api/admin/supports', (req,res)=> res.json({supports}));
-app.get('/api/admin/balances', (req,res)=> res.json({balances}));
+app.get('/api/admin/balances', (req,res)=> res.json({balances, users}));
+app.get('/api/admin/all', (req,res)=> res.json({deposits,withdraws,supports,balances,users}));
 
 app.post('/api/admin/approve', (req,res)=>{
   const d=deposits.find(x=>x.id==req.body.id);
@@ -60,14 +79,7 @@ app.post('/api/admin/withdraw-approve', (req,res)=>{
   res.json({ok:true});
 });
 
-app.get('/', (req,res)=>{
-  res.json({ status:'ok', admin:'/admin.html' });
-});
+app.get('/', (req,res)=> res.json({ status:'ok', admin:'/admin.html' }));
 
-app.get('*',(req,res)=>{
-  res.sendFile(path.join(__dirname,'public','index.html'), (err)=>{
-    if(err) res.json({ status:'ok' });
-  });
-});
-
-app.listen(process.env.PORT||10000, ()=> console.log('live'));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, '0.0.0.0', ()=> console.log('live on port '+PORT));
